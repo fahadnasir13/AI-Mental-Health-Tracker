@@ -1,6 +1,6 @@
 # MindFlow AI - Mental Health Tracker
 
-A beautiful, Tesla-inspired AI-powered mental health tracking application built with React, TypeScript, and Tailwind CSS.
+A beautiful,  AI-powered mental health tracking application built with React, TypeScript, and Tailwind CSS.
 
 ## ✨ Features
 
