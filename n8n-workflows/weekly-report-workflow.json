@@ -1,0 +1,353 @@
+{
+  "name": "Weekly Mental Health Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "weekly-trigger",
+      "name": "Weekly Sunday 10AM Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/user_settings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "user_id,notification_settings"
+            },
+            {
+              "name": "notification_settings->>weeklyReports",
+              "value": "eq.true"
+            }
+          ]
+        }
+      },
+      "id": "get-users-weekly",
+      "name": "Get Users with Weekly Reports",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-users-weekly",
+      "name": "Split Users",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate date range for the past week\nconst now = new Date();\nconst oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);\n\nconst startDate = oneWeekAgo.toISOString().split('T')[0];\nconst endDate = now.toISOString().split('T')[0];\n\nreturn {\n  json: {\n    user_id: $input.first().json.user_id,\n    start_date: startDate,\n    end_date: endDate\n  }\n};"
+      },
+      "id": "calculate-dates",
+      "name": "Calculate Week Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/mood_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "*"
+            },
+            {
+              "name": "user_id",
+              "value": "eq.{{ $json.user_id }}"
+            },
+            {
+              "name": "created_at",
+              "value": "gte.{{ $json.start_date }}"
+            },
+            {
+              "name": "created_at",
+              "value": "lte.{{ $json.end_date }}"
+            }
+          ]
+        }
+      },
+      "id": "get-week-logs",
+      "name": "Get Week's Mood Logs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/users",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "id,email"
+            },
+            {
+              "name": "id",
+              "value": "eq.{{ $('Calculate Week Dates').first().json.user_id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-user-email",
+      "name": "Get User Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate weekly report analytics\nconst logs = $input.first().json;\nconst userInfo = $('Get User Email').first().json[0];\nconst dates = $('Calculate Week Dates').first().json;\n\nif (!logs || logs.length === 0) {\n  return {\n    json: {\n      user_email: userInfo.email,\n      has_data: false,\n      message: \"No mood logs found for this week. Remember to check in daily for better insights!\"\n    }\n  };\n}\n\n// Calculate statistics\nconst totalEntries = logs.length;\nconst averageMood = Math.round((logs.reduce((sum, log) => sum + log.mood, 0) / logs.length) * 10) / 10;\nconst journalEntries = logs.filter(log => log.journal_entry && log.journal_entry.trim()).length;\nconst aiInteractions = logs.filter(log => log.ai_response).length;\n\n// Stress level distribution\nconst stressLevels = {\n  low: logs.filter(log => log.stress_level === 'low').length,\n  medium: logs.filter(log => log.stress_level === 'medium').length,\n  high: logs.filter(log => log.stress_level === 'high').length\n};\n\nconst mostCommonStress = Object.entries(stressLevels)\n  .sort(([,a], [,b]) => b - a)[0][0];\n\n// Mood trend (comparing first half vs second half of week)\nconst midPoint = Math.floor(logs.length / 2);\nconst firstHalf = logs.slice(0, midPoint);\nconst secondHalf = logs.slice(midPoint);\n\nconst firstHalfAvg = firstHalf.length > 0 ? \n  firstHalf.reduce((sum, log) => sum + log.mood, 0) / firstHalf.length : 0;\nconst secondHalfAvg = secondHalf.length > 0 ? \n  secondHalf.reduce((sum, log) => sum + log.mood, 0) / secondHalf.length : 0;\n\nconst moodTrend = secondHalfAvg > firstHalfAvg ? 'improving' : \n                 secondHalfAvg < firstHalfAvg ? 'declining' : 'stable';\n\n// Best and worst days\nconst bestDay = logs.reduce((best, log) => log.mood > best.mood ? log : best, logs[0]);\nconst worstDay = logs.reduce((worst, log) => log.mood < worst.mood ? log : worst, logs[0]);\n\n// Generate insights\nconst insights = [];\n\nif (averageMood >= 7) {\n  insights.push(\"🌟 You've had a great week with high mood scores! Keep up the positive momentum.\");\n} else if (averageMood >= 5) {\n  insights.push(\"💪 You've maintained a balanced mood this week. Consider what's working well for you.\");\n} else {\n  insights.push(\"🤗 This week has been challenging. Remember that difficult periods are temporary, and you're doing your best.\");\n}\n\nif (moodTrend === 'improving') {\n  insights.push(\"📈 Your mood has been trending upward throughout the week - that's wonderful progress!\");\n} else if (moodTrend === 'declining') {\n  insights.push(\"📉 Your mood dipped toward the end of the week. Consider what support or self-care might help.\");\n}\n\nif (journalEntries >= totalEntries * 0.7) {\n  insights.push(\"📝 Great job with consistent journaling! Self-reflection is a powerful tool for mental wellness.\");\n}\n\nif (stressLevels.low > stressLevels.high) {\n  insights.push(\"😌 You've managed stress well this week with more low-stress days than high-stress ones.\");\n}\n\n// Recommendations\nconst recommendations = [];\n\nif (averageMood < 5) {\n  recommendations.push(\"Consider reaching out to a friend, family member, or mental health professional for support.\");\n  recommendations.push(\"Try incorporating more self-care activities into your daily routine.\");\n}\n\nif (stressLevels.high > stressLevels.low) {\n  recommendations.push(\"Practice stress-reduction techniques like deep breathing, meditation, or gentle exercise.\");\n  recommendations.push(\"Identify your main stress triggers and brainstorm ways to manage them.\");\n}\n\nif (journalEntries < totalEntries * 0.3) {\n  recommendations.push(\"Try writing more journal entries - they help process emotions and track patterns.\");\n}\n\nrecommendations.push(\"Keep up your daily mood tracking - consistency helps identify patterns and progress.\");\n\nreturn {\n  json: {\n    user_email: userInfo.email,\n    has_data: true,\n    week_period: `${dates.start_date} to ${dates.end_date}`,\n    statistics: {\n      total_entries: totalEntries,\n      average_mood: averageMood,\n      journal_entries: journalEntries,\n      ai_interactions: aiInteractions,\n      most_common_stress: mostCommonStress,\n      mood_trend: moodTrend\n    },\n    highlights: {\n      best_day: {\n        date: new Date(bestDay.created_at).toLocaleDateString(),\n        mood: bestDay.mood,\n        note: bestDay.journal_entry ? bestDay.journal_entry.substring(0, 100) + '...' : 'No journal entry'\n      },\n      worst_day: {\n        date: new Date(worstDay.created_at).toLocaleDateString(),\n        mood: worstDay.mood,\n        note: worstDay.journal_entry ? worstDay.journal_entry.substring(0, 100) + '...' : 'No journal entry'\n      }\n    },\n    insights: insights,\n    recommendations: recommendations\n  }\n};"
+      },
+      "id": "generate-report",
+      "name": "Generate Weekly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-data-check",
+              "leftValue": "={{ $json.has_data }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-has-data",
+      "name": "Has Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "reports@mindflow-ai.com",
+        "toEmail": "={{ $json.user_email }}",
+        "subject": "📊 Your Weekly Mental Health Report",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Weekly Mental Health Report</title>\n</head>\n<body style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;\">\n    <div style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px; border-radius: 15px; text-align: center; margin-bottom: 30px; color: white;\">\n        <h1 style=\"margin: 0; font-size: 32px;\">📊 Weekly Report</h1>\n        <p style=\"margin: 10px 0 0 0; font-size: 18px; opacity: 0.9;\">{{ $json.week_period }}</p>\n    </div>\n    \n    <!-- Statistics Section -->\n    <div style=\"background: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);\">\n        <h2 style=\"color: #2c3e50; margin-top: 0; border-bottom: 2px solid #3498db; padding-bottom: 10px;\">📈 Your Week in Numbers</h2>\n        \n        <div style=\"display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px; margin: 25px 0;\">\n            <div style=\"text-align: center; padding: 20px; background: #e3f2fd; border-radius: 10px;\">\n                <div style=\"font-size: 28px; font-weight: bold; color: #1976d2;\">{{ $json.statistics.total_entries }}</div>\n                <div style=\"color: #666; font-size: 14px;\">Total Entries</div>\n            </div>\n            <div style=\"text-align: center; padding: 20px; background: #f3e5f5; border-radius: 10px;\">\n                <div style=\"font-size: 28px; font-weight: bold; color: #7b1fa2;\">{{ $json.statistics.average_mood }}/10</div>\n                <div style=\"color: #666; font-size: 14px;\">Average Mood</div>\n            </div>\n            <div style=\"text-align: center; padding: 20px; background: #e8f5e8; border-radius: 10px;\">\n                <div style=\"font-size: 28px; font-weight: bold; color: #388e3c;\">{{ $json.statistics.journal_entries }}</div>\n                <div style=\"color: #666; font-size: 14px;\">Journal Entries</div>\n            </div>\n            <div style=\"text-align: center; padding: 20px; background: #fff3e0; border-radius: 10px;\">\n                <div style=\"font-size: 28px; font-weight: bold; color: #f57c00;\">{{ $json.statistics.ai_interactions }}</div>\n                <div style=\"color: #666; font-size: 14px;\">AI Conversations</div>\n            </div>\n        </div>\n        \n        <div style=\"background: #f8f9fa; padding: 20px; border-radius: 10px; margin-top: 20px;\">\n            <p style=\"margin: 0;\"><strong>Mood Trend:</strong> \n                <span style=\"color: {{ $json.statistics.mood_trend === 'improving' ? '#28a745' : $json.statistics.mood_trend === 'declining' ? '#dc3545' : '#6c757d' }}; font-weight: bold; text-transform: capitalize;\">{{ $json.statistics.mood_trend }}</span>\n            </p>\n            <p style=\"margin: 10px 0 0 0;\"><strong>Most Common Stress Level:</strong> \n                <span style=\"text-transform: capitalize; font-weight: bold;\">{{ $json.statistics.most_common_stress }}</span>\n            </p>\n        </div>\n    </div>\n    \n    <!-- Highlights Section -->\n    <div style=\"background: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);\">\n        <h2 style=\"color: #2c3e50; margin-top: 0; border-bottom: 2px solid #e74c3c; padding-bottom: 10px;\">✨ Week Highlights</h2>\n        \n        <div style=\"display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;\">\n            <div style=\"padding: 20px; background: linear-gradient(135deg, #a8e6cf 0%, #88d8a3 100%); border-radius: 10px;\">\n                <h3 style=\"margin: 0 0 10px 0; color: #2d5a3d;\">🌟 Best Day</h3>\n                <p style=\"margin: 0; font-weight: bold;\">{{ $json.highlights.best_day.date }}</p>\n                <p style=\"margin: 5px 0; font-size: 18px;\">Mood: {{ $json.highlights.best_day.mood }}/10</p>\n                <p style=\"margin: 10px 0 0 0; font-size: 14px; opacity: 0.8;\">{{ $json.highlights.best_day.note }}</p>\n            </div>\n            \n            <div style=\"padding: 20px; background: linear-gradient(135deg, #ffd3a5 0%, #fd9853 100%); border-radius: 10px;\">\n                <h3 style=\"margin: 0 0 10px 0; color: #8b4513;\">💪 Growth Day</h3>\n                <p style=\"margin: 0; font-weight: bold;\">{{ $json.highlights.worst_day.date }}</p>\n                <p style=\"margin: 5px 0; font-size: 18px;\">Mood: {{ $json.highlights.worst_day.mood }}/10</p>\n                <p style=\"margin: 10px 0 0 0; font-size: 14px; opacity: 0.8;\">{{ $json.highlights.worst_day.note }}</p>\n            </div>\n        </div>\n    </div>\n    \n    <!-- Insights Section -->\n    <div style=\"background: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);\">\n        <h2 style=\"color: #2c3e50; margin-top: 0; border-bottom: 2px solid #9b59b6; padding-bottom: 10px;\">💡 Personal Insights</h2>\n        \n        <div style=\"margin-top: 20px;\">\n            {{ $json.insights.map(insight => `<div style=\"background: #f8f9fa; padding: 15px; border-left: 4px solid #9b59b6; margin-bottom: 15px; border-radius: 0 8px 8px 0;\"><p style=\"margin: 0; font-size: 16px;\">${insight}</p></div>`).join('') }}\n        </div>\n    </div>\n    \n    <!-- Recommendations Section -->\n    <div style=\"background: white; padding: 30px; border-radius: 15px; margin-bottom: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);\">\n        <h2 style=\"color: #2c3e50; margin-top: 0; border-bottom: 2px solid #f39c12; padding-bottom: 10px;\">🎯 Recommendations for Next Week</h2>\n        \n        <div style=\"margin-top: 20px;\">\n            {{ $json.recommendations.map((rec, index) => `<div style=\"background: #fff8e1; padding: 15px; border-left: 4px solid #f39c12; margin-bottom: 15px; border-radius: 0 8px 8px 0;\"><p style=\"margin: 0; font-size: 16px;\"><strong>${index + 1}.</strong> ${rec}</p></div>`).join('') }}\n        </div>\n    </div>\n    \n    <!-- Call to Action -->\n    <div style=\"text-align: center; margin: 30px 0;\">\n        <a href=\"{{ $env.FRONTEND_URL }}/dashboard\" style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 35px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block; font-size: 18px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);\">Continue Your Journey</a>\n    </div>\n    \n    <!-- Footer -->\n    <div style=\"text-align: center; padding: 25px; color: #6c757d; font-size: 14px; border-top: 1px solid #e9ecef; margin-top: 30px;\">\n        <p style=\"margin: 0 0 10px 0;\">Keep up the great work on your mental health journey! 🌱</p>\n        <p style=\"margin: 0;\">With care and support,<br><strong>The MindFlow AI Team</strong></p>\n        \n        <div style=\"margin-top: 20px; padding-top: 15px; border-top: 1px solid #e9ecef;\">\n            <p style=\"margin: 0; font-size: 12px; color: #adb5bd;\">Don't want weekly reports? <a href=\"{{ $env.FRONTEND_URL }}/settings\" style=\"color: #667eea;\">Update your preferences</a></p>\n        </div>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-weekly-report",
+      "name": "Send Weekly Report Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "reports@mindflow-ai.com",
+        "toEmail": "={{ $json.user_email }}",
+        "subject": "📝 Weekly Check-in Reminder",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Weekly Check-in Reminder</title>\n</head>\n<body style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;\">\n    <div style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 30px;\">\n        <h1 style=\"color: white; margin: 0; font-size: 28px;\">🧠 MindFlow AI</h1>\n        <p style=\"color: rgba(255,255,255,0.9); margin: 10px 0 0 0; font-size: 16px;\">Weekly Check-in Reminder</p>\n    </div>\n    \n    <div style=\"background: #f8f9fa; padding: 25px; border-radius: 10px; margin-bottom: 25px; text-align: center;\">\n        <h2 style=\"color: #2c3e50; margin-top: 0;\">We missed you this week! 💙</h2>\n        <p style=\"font-size: 16px; margin-bottom: 20px;\">{{ $json.message }}</p>\n        \n        <div style=\"margin: 25px 0;\">\n            <a href=\"{{ $env.FRONTEND_URL }}/dashboard\" style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block; font-size: 16px;\">Start Tracking Today</a>\n        </div>\n    </div>\n    \n    <div style=\"text-align: center; padding: 20px; color: #6c757d; font-size: 14px;\">\n        <p style=\"margin-bottom: 0;\">Your mental health matters. We're here when you're ready.</p>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-reminder-no-data",
+      "name": "Send Reminder (No Data)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2000, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP Email"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Sunday 10AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Users with Weekly Reports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Users with Weekly Reports": {
+      "main": [
+        [
+          {
+            "node": "Split Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Users": {
+      "main": [
+        [
+          {
+            "node": "Calculate Week Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Week Dates": {
+      "main": [
+        [
+          {
+            "node": "Get Week's Mood Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Week's Mood Logs": {
+      "main": [
+        [
+          {
+            "node": "Get User Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Email": {
+      "main": [
+        [
+          {
+            "node": "Generate Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Has Data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Data?": {
+      "main": [
+        [
+          {
+            "node": "Send Weekly Report Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reminder (No Data)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "weekly-reports",
+      "name": "Weekly Reports"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

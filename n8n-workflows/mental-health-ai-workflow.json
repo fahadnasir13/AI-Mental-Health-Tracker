@@ -1,0 +1,293 @@
+{
+  "name": "Mental Health AI Support Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mental-health-ai",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "mental-health-ai-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate input data\nconst inputData = $input.first().json;\n\nconst mood = inputData.mood || 5;\nconst stressLevel = inputData.stress_level || 'medium';\nconst journalEntry = inputData.journal_entry || '';\nconst persona = inputData.persona || 'therapist';\nconst language = inputData.language || 'en';\nconst conversationHistory = inputData.conversation_history || [];\n\n// Emergency keyword detection\nconst emergencyKeywords = [\n  'suicide', 'kill myself', 'end it all', 'hurt myself', 'self harm',\n  'want to die', 'no point living', 'better off dead', 'harm myself'\n];\n\nconst isEmergency = emergencyKeywords.some(keyword => \n  journalEntry.toLowerCase().includes(keyword)\n);\n\n// Determine response category\nlet category = 'neutral';\nif (isEmergency) {\n  category = 'emergency';\n} else if (mood <= 3 || stressLevel === 'high') {\n  category = 'support';\n} else if (mood >= 8 && stressLevel === 'low') {\n  category = 'celebrate';\n} else if (mood >= 6) {\n  category = 'encourage';\n}\n\n// Build context for AI\nconst context = {\n  mood,\n  stressLevel,\n  journalEntry,\n  persona,\n  language,\n  category,\n  isEmergency,\n  conversationHistory: conversationHistory.slice(-5) // Last 5 messages for context\n};\n\nreturn { json: context };"
+      },
+      "id": "data-processor",
+      "name": "Process Input Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "emergency-check",
+              "leftValue": "={{ $json.isEmergency }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "emergency-check",
+      "name": "Emergency Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emergency response\nconst emergencyResponse = {\n  ai_response: \"I'm very concerned about what you've shared. You're not alone, and there are people who want to help. Please reach out to a crisis helpline: National Suicide Prevention Lifeline: 988 or Crisis Text Line: Text HOME to 741741. Your life has value, and there are people trained to support you through this difficult time.\",\n  coping_strategies: [\n    \"Call 988 (National Suicide Prevention Lifeline) immediately\",\n    \"Text HOME to 741741 (Crisis Text Line)\",\n    \"Go to your nearest emergency room\",\n    \"Call a trusted friend or family member to stay with you\"\n  ],\n  emergency_detected: true,\n  confidence_score: 1.0,\n  follow_up_questions: [\n    \"Do you have someone who can stay with you right now?\",\n    \"Have you contacted a crisis helpline before?\",\n    \"What has helped you feel safer in the past?\"\n  ],\n  meditation_suggestion: \"Focus on staying present and safe. Try counting your breaths: 1 on inhale, 2 on exhale, up to 10, then start over.\",\n  breathing_exercise: \"Emergency grounding: Take slow, deep breaths while naming 5 things you can see around you right now.\"\n};\n\nreturn { json: emergencyResponse };"
+      },
+      "id": "emergency-response",
+      "name": "Emergency Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{ $json.systemPrompt }}"
+            },
+            {
+              "role": "user", 
+              "content": "={{ $json.userPrompt }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 500
+        }
+      },
+      "id": "openai-chat",
+      "name": "OpenAI Chat",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build AI prompts based on context\nconst context = $input.first().json;\n\n// System prompts for different personas\nconst systemPrompts = {\n  therapist: `You are a compassionate, professional therapist providing mental health support. You listen empathetically, validate feelings, and offer evidence-based coping strategies. Always maintain professional boundaries while being warm and supportive. Focus on the user's emotional wellbeing and provide practical, actionable advice.`,\n  \n  coach: `You are an energetic, motivational life coach focused on mental wellness. You inspire confidence, celebrate progress, and help users see their strength and potential. Use encouraging language and help users reframe challenges as opportunities for growth. Be enthusiastic but sensitive to their current emotional state.`,\n  \n  spiritual: `You are a wise, spiritual guide offering comfort through mindfulness and spiritual wisdom. You help users connect with their inner peace, find meaning in their experiences, and tap into their spiritual resources for healing. Use gentle, contemplative language and offer practices like meditation and gratitude.`,\n  \n  friend: `You are a caring, understanding friend who provides emotional support. You're relatable, genuine, and offer the kind of support a close friend would give. You validate feelings, share in both struggles and celebrations, and offer practical suggestions with warmth and authenticity.`\n};\n\nconst systemPrompt = systemPrompts[context.persona] || systemPrompts.therapist;\n\n// Build user prompt with context\nlet userPrompt = `Current mood: ${context.mood}/10\\nStress level: ${context.stressLevel}\\n`;\n\nif (context.journalEntry) {\n  userPrompt += `Journal entry: \"${context.journalEntry}\"\\n`;\n}\n\nif (context.conversationHistory.length > 0) {\n  userPrompt += `\\nRecent conversation context:\\n`;\n  context.conversationHistory.forEach(msg => {\n    userPrompt += `${msg.role}: ${msg.content}\\n`;\n  });\n}\n\nuserPrompt += `\\nPlease provide supportive guidance, coping strategies, and follow-up questions. Keep your response under 200 words and focus on being helpful and encouraging.`;\n\nif (context.language !== 'en') {\n  userPrompt += ` Please respond in ${context.language}.`;\n}\n\nreturn { \n  json: { \n    systemPrompt, \n    userPrompt,\n    originalContext: context\n  } \n};"
+      },
+      "id": "prompt-builder",
+      "name": "Build AI Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process OpenAI response and add additional features\nconst aiResponse = $input.first().json.choices[0].message.content;\nconst context = $('Build AI Prompts').first().json.originalContext;\n\n// Generate coping strategies based on mood and stress\nconst copingStrategies = [];\n\nif (context.mood <= 4 || context.stressLevel === 'high') {\n  copingStrategies.push(\n    \"Try the 5-4-3-2-1 grounding technique: 5 things you see, 4 you can touch, 3 you hear, 2 you smell, 1 you taste\",\n    \"Practice deep breathing: 4 counts in, hold for 4, out for 6\",\n    \"Take a 10-minute walk outside if possible\"\n  );\n}\n\nif (context.stressLevel === 'medium' || (context.mood >= 4 && context.mood <= 7)) {\n  copingStrategies.push(\n    \"Try progressive muscle relaxation\",\n    \"Listen to calming music or nature sounds\",\n    \"Do some gentle stretching or yoga\"\n  );\n}\n\nif (context.mood >= 7 && context.stressLevel === 'low') {\n  copingStrategies.push(\n    \"Engage in a creative activity you enjoy\",\n    \"Plan something fun for later this week\",\n    \"Share your positive energy with someone else\"\n  );\n}\n\n// Generate follow-up questions\nconst followUpQuestions = [];\n\nif (context.category === 'support') {\n  followUpQuestions.push(\n    \"What's one small thing that might bring you a moment of peace today?\",\n    \"Who in your life makes you feel supported and understood?\"\n  );\n} else if (context.category === 'encourage') {\n  followUpQuestions.push(\n    \"What's one thing you're proud of about how you're handling things?\",\n    \"What are you looking forward to in the coming days?\"\n  );\n} else if (context.category === 'celebrate') {\n  followUpQuestions.push(\n    \"What do you think is contributing most to this positive feeling?\",\n    \"How can you carry this energy into the rest of your week?\"\n  );\n}\n\n// Meditation and breathing suggestions\nconst meditationSuggestions = {\n  high: \"Try a 5-minute loving-kindness meditation: Start by sending love to yourself, then extend it to loved ones, neutral people, difficult people, and finally all beings.\",\n  medium: \"Practice a 10-minute mindfulness meditation: Focus on your breath and gently return attention to breathing whenever your mind wanders.\",\n  low: \"Enjoy a 15-minute gratitude meditation: Reflect on things you're thankful for, allowing feelings of appreciation to fill your heart.\"\n};\n\nconst breathingExercises = {\n  high: \"4-7-8 Breathing: Inhale for 4 counts, hold for 7, exhale for 8. Repeat 4 times. This activates your parasympathetic nervous system.\",\n  medium: \"Box Breathing: Inhale for 4, hold for 4, exhale for 4, hold for 4. Repeat for 2-3 minutes. Used by Navy SEALs for stress management.\",\n  low: \"Coherent Breathing: Breathe in and out for 5 counts each. This creates heart rate variability and promotes calm alertness.\"\n};\n\nconst response = {\n  ai_response: aiResponse,\n  coping_strategies: copingStrategies.slice(0, 3),\n  emergency_detected: false,\n  confidence_score: 0.85,\n  follow_up_questions: followUpQuestions,\n  meditation_suggestion: meditationSuggestions[context.stressLevel],\n  breathing_exercise: breathingExercises[context.stressLevel],\n  mood_category: context.category,\n  persona_used: context.persona\n};\n\nreturn { json: response };"
+      },
+      "id": "response-processor",
+      "name": "Process AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.MONGODB_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.MONGODB_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "timestamp",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "user_context",
+              "value": "={{ $('Build AI Prompts').first().json.originalContext }}"
+            },
+            {
+              "name": "ai_response",
+              "value": "={{ $json }}"
+            },
+            {
+              "name": "tokens_used",
+              "value": "={{ $('OpenAI Chat').first().json.usage?.total_tokens || 0 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "mongodb-logger",
+      "name": "Log to MongoDB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process Input Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Input Data": {
+      "main": [
+        [
+          {
+            "node": "Emergency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emergency Check": {
+      "main": [
+        [
+          {
+            "node": "Emergency Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build AI Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emergency Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Prompts": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat": {
+      "main": [
+        [
+          {
+            "node": "Process AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process AI Response": {
+      "main": [
+        [
+          {
+            "node": "Log to MongoDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to MongoDB": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "mental-health",
+      "name": "Mental Health"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}

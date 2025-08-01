@@ -1,0 +1,332 @@
+{
+  "name": "Daily Mental Health Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily 9AM Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/user_settings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "user_id,notification_settings"
+            },
+            {
+              "name": "notification_settings->>dailyReminders",
+              "value": "eq.true"
+            }
+          ]
+        }
+      },
+      "id": "get-users",
+      "name": "Get Users with Reminders Enabled",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-users",
+      "name": "Split Users",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/users",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "id,email"
+            },
+            {
+              "name": "id",
+              "value": "eq.{{ $json.user_id }}"
+            }
+          ]
+        }
+      },
+      "id": "get-user-details",
+      "name": "Get User Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/mood_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "created_at"
+            },
+            {
+              "name": "user_id",
+              "value": "eq.{{ $json[0].id }}"
+            },
+            {
+              "name": "created_at",
+              "value": "gte.{{ new Date().toISOString().split('T')[0] }}"
+            }
+          ]
+        }
+      },
+      "id": "check-today-log",
+      "name": "Check Today's Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "no-log-today",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-needs-reminder",
+      "name": "Needs Reminder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@mindflow-ai.com",
+        "toEmail": "={{ $('Get User Details').first().json[0].email }}",
+        "subject": "🌟 Daily Mental Health Check-in",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Daily Check-in Reminder</title>\n</head>\n<body style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;\">\n    <div style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 30px;\">\n        <h1 style=\"color: white; margin: 0; font-size: 28px;\">🧠 MindFlow AI</h1>\n        <p style=\"color: rgba(255,255,255,0.9); margin: 10px 0 0 0; font-size: 16px;\">Your daily mental wellness companion</p>\n    </div>\n    \n    <div style=\"background: #f8f9fa; padding: 25px; border-radius: 10px; margin-bottom: 25px;\">\n        <h2 style=\"color: #2c3e50; margin-top: 0;\">How are you feeling today? 🌈</h2>\n        <p style=\"font-size: 16px; margin-bottom: 20px;\">Taking a moment to check in with yourself is a powerful act of self-care. Your mental health matters, and we're here to support you on this journey.</p>\n        \n        <div style=\"text-align: center; margin: 25px 0;\">\n            <a href=\"{{ $env.FRONTEND_URL }}/dashboard\" style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block; font-size: 16px;\">Log Your Mood Today</a>\n        </div>\n    </div>\n    \n    <div style=\"background: white; border: 1px solid #e9ecef; padding: 20px; border-radius: 10px; margin-bottom: 20px;\">\n        <h3 style=\"color: #495057; margin-top: 0;\">💡 Today's Wellness Tip</h3>\n        <p style=\"margin-bottom: 0;\">Try the 5-4-3-2-1 grounding technique: Notice 5 things you can see, 4 you can touch, 3 you can hear, 2 you can smell, and 1 you can taste. This simple exercise can help center your mind and reduce anxiety.</p>\n    </div>\n    \n    <div style=\"text-align: center; padding: 20px; color: #6c757d; font-size: 14px;\">\n        <p>You're not alone in this journey. We're here to support you every step of the way.</p>\n        <p style=\"margin-bottom: 0;\">With care,<br>The MindFlow AI Team</p>\n    </div>\n    \n    <div style=\"text-align: center; padding: 15px; border-top: 1px solid #e9ecef; color: #adb5bd; font-size: 12px;\">\n        <p style=\"margin: 0;\">Don't want daily reminders? <a href=\"{{ $env.FRONTEND_URL }}/settings\" style=\"color: #667eea;\">Update your preferences</a></p>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-reminder-email",
+      "name": "Send Reminder Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1560, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PUSH_NOTIFICATION_SERVICE_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.PUSH_SERVICE_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $('Get User Details').first().json[0].id }}"
+            },
+            {
+              "name": "title",
+              "value": "🌟 Daily Check-in Time"
+            },
+            {
+              "name": "body",
+              "value": "How are you feeling today? Take a moment to log your mood and get AI support."
+            },
+            {
+              "name": "icon",
+              "value": "/brain-icon.svg"
+            },
+            {
+              "name": "url",
+              "value": "{{ $env.FRONTEND_URL }}/dashboard"
+            }
+          ]
+        }
+      },
+      "id": "send-push-notification",
+      "name": "Send Push Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 400]
+    }
+  ],
+  "connections": {
+    "Daily 9AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Users with Reminders Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Users with Reminders Enabled": {
+      "main": [
+        [
+          {
+            "node": "Split Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Users": {
+      "main": [
+        [
+          {
+            "node": "Get User Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Details": {
+      "main": [
+        [
+          {
+            "node": "Check Today's Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Today's Log": {
+      "main": [
+        [
+          {
+            "node": "Needs Reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Reminder?": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Push Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "updatedAt": "2024-01-15T10:00:00.000Z",
+      "id": "reminders",
+      "name": "Reminders"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "versionId": "1"
+}
