@@ -45,7 +45,7 @@ Backend API Routes
 
 ### 1. Clone and Install
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/fahadnasir13/AI-Mental-Health-Tracker
 cd mental-health-tracker
 npm install
 ```
